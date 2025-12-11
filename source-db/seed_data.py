@@ -5,7 +5,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 # Connect to Postgres in Docker container
-DSN = "dbname=warehouse user=warehouse password=pw host=localhost port=5432"
+DSN = "dbname=orders_db user=postgres password=password host=localhost port=5432"
 
 def get_conn():
     return psycopg2.connect(DSN, cursor_factory=RealDictCursor)

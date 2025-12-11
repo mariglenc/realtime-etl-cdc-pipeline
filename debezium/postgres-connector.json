@@ -2,19 +2,17 @@
   "name": "postgres-connector",
   "config": {
     "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
-    "plugin.name": "pgoutput",
     "database.hostname": "postgres",
     "database.port": "5432",
     "database.user": "postgres",
     "database.password": "password",
     "database.dbname": "orders_db",
-    "slot.name": "debezium_slot",
-    "publication.name": "dbz_publication",
     "table.include.list": "public.orders",
+    "plugin.name": "pgoutput",
+    "slot.name": "orders_slot",
+    "publication.name": "orders_pub",
     "topic.prefix": "dbserver1",
-    "transforms": "unwrap",
-    "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
-    "key.converter.schemas.enable": "false",
-    "value.converter.schemas.enable": "false"
+    "schema.history.internal.kafka.bootstrap.servers": "kafka:9092",
+    "schema.history.internal.kafka.topic": "schema-changes.orders"
   }
 }
