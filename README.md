@@ -16,10 +16,3 @@ Follow the README phases to expand into a full pipeline:
 2. Run Kafka + Debezium (via Docker Compose)
 3. Run Spark processor
 4. Validate writes into the warehouse (Postgres/Redshift)
-
-## How to use (Phase 1)
-1. Initialize git:
-   ```bash
-   git init
-   git add .
-   git commit -m "Initial project skeleton"
