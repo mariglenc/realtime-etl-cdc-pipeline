@@ -1,0 +1,2 @@
+pyspark==3.4.1
+# add other libs as needed (psycopg2-binary for JDBC upsert if using foreachBatch)
