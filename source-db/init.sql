@@ -1,5 +1,3 @@
--- source-db/init.sql
--- Create the orders table
 CREATE TABLE orders (
     order_id SERIAL PRIMARY KEY,
     customer_id INT NOT NULL,
