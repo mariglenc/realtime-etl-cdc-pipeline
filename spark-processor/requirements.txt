@@ -1,3 +1,5 @@
+# spark-processor\requirements.txt
+
 pyspark==3.4.1
 kafka-python
 psycopg2-binary

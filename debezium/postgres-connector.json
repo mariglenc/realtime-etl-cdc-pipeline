@@ -1,3 +1,4 @@
+// debezium\postgres-connector.json
 {
   "name": "postgres-connector",
   "config": {
