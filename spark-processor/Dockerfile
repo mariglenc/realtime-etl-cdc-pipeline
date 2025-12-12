@@ -1,11 +1,17 @@
-FROM openjdk:11-jre-slim
+FROM spark:3.4.1
 
-# You may replace with a Spark base image in Phase 5
 WORKDIR /app
-COPY . /app
 
-# Install python and pip
+COPY requirements.txt /app/requirements.txt
+
+USER root
+
+RUN mkdir -p /tmp/spark_checkpoints /tmp/spark_dlq
+
 RUN apt-get update && apt-get install -y python3 python3-pip && \
-    pip3 install --no-cache-dir -r requirements.txt
+    pip3 install --no-cache-dir -r requirements.txt && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+COPY . /app
 
 ENTRYPOINT ["python3", "processor.py"]

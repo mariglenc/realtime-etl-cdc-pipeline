@@ -10,8 +10,19 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ./source-db/init.sql:/docker-entrypoint-initdb.d/init.sql
     command: ["postgres", "-c", "wal_level=logical", "-c", "max_wal_senders=10", "-c", "max_replication_slots=10"]
+
+  postgres-warehouse:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: analytics
+      POSTGRES_USER: warehouse
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./warehouse/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
@@ -50,6 +61,27 @@ services:
       PLUGIN_PATH: /kafka/connect/debezium-connector-postgres
     ports:
       - "8083:8083"
+
+  spark-processor:
+    build:
+      context: ./spark-processor
+      dockerfile: Dockerfile 
+    depends_on:
+      - kafka
+      - postgres-warehouse
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: dbserver1.public.orders
+      PG_HOST: postgres-warehouse
+      PG_PORT: 5432
+      PG_DB: analytics
+      PG_USER: warehouse
+      PG_PASSWORD: password
+      PG_TABLE: orders_fact
+      CHECKPOINT_LOCATION: /tmp/spark_checkpoints/orders
+      DLQ_PATH: /tmp/spark_dlq/malformed_messages.log
+    volumes:
+      - ./tmp:/tmp
 
 volumes:
   pgdata:
