@@ -1,4 +1,3 @@
-// debezium\postgres-connector.json
 {
   "name": "postgres-connector",
   "config": {
@@ -10,10 +9,6 @@
     "database.dbname": "orders_db",
     "table.include.list": "public.orders",
     "plugin.name": "pgoutput",
-    "slot.name": "orders_slot",
-    "publication.name": "orders_pub",
-    "topic.prefix": "dbserver1",
-    "schema.history.internal.kafka.bootstrap.servers": "kafka:9092",
-    "schema.history.internal.kafka.topic": "schema-changes.orders"
+    "topic.prefix": "dbserver1"
   }
 }

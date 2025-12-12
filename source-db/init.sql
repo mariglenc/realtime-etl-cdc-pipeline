@@ -1,4 +1,4 @@
--- source-db\init.sql
+-- source-db/init.sql
 -- Create the orders table
 CREATE TABLE orders (
     order_id SERIAL PRIMARY KEY,

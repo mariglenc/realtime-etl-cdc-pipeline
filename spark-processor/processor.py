@@ -1,82 +1,135 @@
-# spark-processor\processor.py
-
+# spark-processor/processor.py
+import os
+import logging
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_json, col, current_timestamp
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DecimalType, TimestampType
-import psycopg2
+from pyspark.sql.functions import (
+    from_json, col, current_timestamp, to_timestamp, lit, when
+)
+from pyspark.sql.types import (
+    StructType, StructField, StringType, IntegerType, LongType
+)
 
-# 1. Create Spark session with Kafka and Postgres dependencies
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Environment variables
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "dbserver1.public.orders")
+PG_HOST = os.getenv("PG_HOST", "postgres-warehouse")
+PG_PORT = os.getenv("PG_PORT", "5432")
+PG_DB = os.getenv("PG_DB", "analytics")
+PG_USER = os.getenv("PG_USER", "warehouse")
+PG_PASSWORD = os.getenv("PG_PASSWORD", "password")
+PG_TABLE = os.getenv("PG_TABLE", "orders_fact")
+CHECKPOINT_LOCATION = os.getenv("CHECKPOINT_LOCATION", "/tmp/spark_checkpoints/orders")
+
+# Create Spark session
+logger.info("Initializing Spark Session...")
 spark = SparkSession.builder \
-    .appName("CDC-ETL") \
-    .config("spark.jars.packages",
-            "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.0,"
-            "org.postgresql:postgresql:42.6.0") \
+    .appName("CDC-ETL-Pipeline") \
+    .config("spark.sql.adaptive.enabled", "true") \
     .getOrCreate()
 
-# 2. Define Debezium CDC schema
-schema = StructType([
-    StructField("before", StructType([
-        StructField("order_id", IntegerType()),
-        StructField("customer_id", IntegerType()),
-        StructField("product_name", StringType()),
-        StructField("amount", DecimalType(10, 2)),
-        StructField("status", StringType()),
-        StructField("created_at", TimestampType()),
-        StructField("updated_at", TimestampType())
-    ])),
-    StructField("after", StructType([
-        StructField("order_id", IntegerType()),
-        StructField("customer_id", IntegerType()),
-        StructField("product_name", StringType()),
-        StructField("amount", DecimalType(10, 2)),
-        StructField("status", StringType()),
-        StructField("created_at", TimestampType()),
-        StructField("updated_at", TimestampType())
-    ])),
-    StructField("op", StringType()),  # c/u/d
-    StructField("ts_ms", StringType())
-])
+spark.sparkContext.setLogLevel("WARN")
 
-# 3. Read from Kafka
-df = spark.readStream \
+logger.info(f"Reading from Kafka topic: {KAFKA_TOPIC}")
+
+# Read from Kafka - start simple, just get raw messages
+kafka_df = spark.readStream \
     .format("kafka") \
-    .option("kafka.bootstrap.servers", "kafka:9092") \
-    .option("subscribe", "dbserver1.public.orders") \
+    .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS) \
+    .option("subscribe", KAFKA_TOPIC) \
     .option("startingOffsets", "earliest") \
+    .option("failOnDataLoss", "false") \
     .load()
 
-# 4. Parse JSON payload
-parsed_df = df.select(from_json(col("value").cast("string"), schema).alias("data")) \
-              .select("data.*")
+logger.info("Parsing Kafka messages...")
 
-# 5. Transform: take 'after' for inserts/updates, handle deletes separately
-transformed_df = parsed_df \
-    .withColumn("order_id", col("after.order_id")) \
-    .withColumn("customer_id", col("after.customer_id")) \
-    .withColumn("product_name", col("after.product_name")) \
-    .withColumn("amount", col("after.amount")) \
-    .withColumn("status", col("after.status")) \
-    .withColumn("created_at", col("after.created_at")) \
-    .withColumn("updated_at", col("after.updated_at")) \
-    .withColumn("cdc_timestamp", col("ts_ms").cast(TimestampType())) \
-    .withColumn("processed_at", current_timestamp()) \
-    .filter(col("op").isin("c", "u"))  # ignore deletes
+# SIMPLEST POSSIBLE APPROACH: Parse the JSON dynamically
+# This will infer the schema from the JSON
+from pyspark.sql.functions import expr, regexp_extract
 
-# 6. Define function to write each micro-batch to Postgres
+# Convert Kafka value to string and extract the payload part
+parsed_df = kafka_df.select(
+    col("value").cast("string").alias("json_value"),
+    col("timestamp").alias("kafka_timestamp")
+)
+
+# Extract fields using JSON path
+extracted_df = parsed_df.select(
+    expr("get_json_object(json_value, '$.payload.after.order_id')").cast("int").alias("order_id"),
+    expr("get_json_object(json_value, '$.payload.after.customer_id')").cast("int").alias("customer_id"),
+    expr("get_json_object(json_value, '$.payload.after.product_name')").alias("product_name"),
+    lit(0.0).alias("amount"),  # Will fix amount later
+    expr("get_json_object(json_value, '$.payload.after.status')").alias("status"),
+    expr("get_json_object(json_value, '$.payload.after.created_at')").cast("long").alias("created_at_micro"),
+    expr("get_json_object(json_value, '$.payload.after.updated_at')").cast("long").alias("updated_at_micro"),
+    expr("get_json_object(json_value, '$.payload.ts_ms')").cast("long").alias("ts_ms"),
+    expr("get_json_object(json_value, '$.payload.op')").alias("operation_type"),
+    col("kafka_timestamp")
+)
+
+# Filter and transform
+final_df = extracted_df \
+    .filter(col("order_id").isNotNull()) \
+    .filter(col("operation_type").isin("c", "u", "r")) \
+    .select(
+        col("order_id"),
+        col("customer_id"),
+        col("product_name"),
+        col("amount"),
+        col("status"),
+        to_timestamp(col("created_at_micro") / 1000000).alias("created_at"),
+        to_timestamp(col("updated_at_micro") / 1000000).alias("updated_at"),
+        to_timestamp(col("ts_ms") / 1000).alias("cdc_timestamp"),
+        current_timestamp().alias("processed_at"),
+        col("operation_type")
+    )
+
+# JDBC URL
+jdbc_url = f"jdbc:postgresql://{PG_HOST}:{PG_PORT}/{PG_DB}"
+
+# Write function
 def write_to_postgres(batch_df, batch_id):
-    batch_df.write \
-        .format("jdbc") \
-        .mode("append") \
-        .option("url", "jdbc:postgresql://warehouse:5432/analytics") \
-        .option("dbtable", "orders_fact") \
-        .option("user", "postgres") \
-        .option("password", "password") \
-        .save()
+    try:
+        row_count = batch_df.count()
+        logger.info(f"Processing batch {batch_id} with {row_count} records")
+        
+        if row_count > 0:
+            # Show sample for debugging
+            sample = batch_df.first()
+            logger.info(f"Sample record: order_id={sample['order_id']}, customer_id={sample['customer_id']}, product={sample['product_name']}")
+            
+            # Write to PostgreSQL
+            batch_df.write \
+                .format("jdbc") \
+                .option("url", jdbc_url) \
+                .option("dbtable", PG_TABLE) \
+                .option("user", PG_USER) \
+                .option("password", PG_PASSWORD) \
+                .option("driver", "org.postgresql.Driver") \
+                .mode("append") \
+                .save()
+            
+            logger.info(f"✅ Batch {batch_id} written to warehouse successfully!")
+        else:
+            logger.info(f"Batch {batch_id} is empty, skipping write")
+    except Exception as e:
+        logger.error(f"❌ Error writing batch {batch_id}: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        # Don't raise - log and continue
+        pass
 
-# 7. Start streaming query with foreachBatch
-query = transformed_df.writeStream \
+# Start streaming query
+logger.info("Starting streaming query...")
+query = final_df.writeStream \
     .foreachBatch(write_to_postgres) \
-    .option("checkpointLocation", "/tmp/checkpoint") \
+    .outputMode("append") \
+    .option("checkpointLocation", CHECKPOINT_LOCATION) \
+    .trigger(processingTime="10 seconds") \
     .start()
 
+logger.info("✅ Streaming query started. Waiting for data...")
 query.awaitTermination()

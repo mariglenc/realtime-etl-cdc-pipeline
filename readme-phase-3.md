@@ -194,3 +194,6 @@ OR
 ✅ Phase 4 — Improving latency, checkpoints, fault-tolerance
 
 Which one should I generate next?
+# source-db/seed_data.py
+# Simulate ongoing inserts/updates/deletes
+# Use psycopg2 to continuously write data

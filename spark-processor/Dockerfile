@@ -1,18 +1,33 @@
-# spark-processor\Dockerfile
+# spark-processor/Dockerfile
 FROM spark:3.4.1
-
-WORKDIR /app
-
-COPY requirements.txt /app/requirements.txt
 
 USER root
 
-RUN apt-get update && apt-get install -y python3 python3-pip && \
-    pip3 install --no-cache-dir -r requirements.txt && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
 
-RUN mkdir -p /tmp/spark_checkpoints /tmp/spark_dlq
+# Install Python and pip
+RUN apt-get update && \
+    apt-get install -y python3-pip curl procps && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-COPY . /app
+# Copy requirements and install dependencies
+COPY requirements.txt /app/requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
 
-ENTRYPOINT ["spark-submit", "--packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1", "processor.py"]
+# Create necessary directories
+RUN mkdir -p /tmp/spark_checkpoints /tmp/spark_dlq && \
+    chmod -R 777 /tmp/spark_checkpoints /tmp/spark_dlq
+
+# Copy application code
+COPY processor.py /app/processor.py
+
+# Set PYSPARK_PYTHON to use python3
+ENV PYSPARK_PYTHON=python3
+ENV PYSPARK_DRIVER_PYTHON=python3
+
+# Submit Spark job with packages downloaded at runtime
+CMD ["spark-submit", \
+     "--packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1,org.postgresql:postgresql:42.7.0", \
+     "--conf", "spark.sql.streaming.checkpointLocation=/tmp/spark_checkpoints", \
+     "/app/processor.py"]
